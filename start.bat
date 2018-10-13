@@ -87,7 +87,7 @@ DEL /F /Q tmp.tmp
 REM
 REM PHP setup
 IF EXIST php\php.exe GOTO PH_UNZIP_OK
-SET PH_URL=https://windows.php.net/downloads/releases/php-%PH_VER%-Win32-VC15-x64.zip
+SET PH_URL=https://windows.php.net/downloads/releases/archives/php-%PH_VER%-Win32-VC15-x64.zip
 ECHO Downloading %PH_URL%
 %curl% "%PH_URL%" %CURL_HDR% --output ph.zip
 IF NOT EXIST ph.zip ECHO PHP download error & goto END 
