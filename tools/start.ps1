@@ -314,6 +314,14 @@ function Set-Nginx
     }
     Assert-Path -Path "nginx\wordpress\index.php" -Pattern "WordPress" -Error "nginx\wordpress\index.php fail"
 
+    $r = (Get-Netfirewallrule -DisplayName "nginx.exe" | Select-Object -Property action -First 1) 2>&1
+    if ($r | Select-String -Pattern "^No ")
+    {
+        $thisDir = Get-Location
+        $r = New-NetFirewallRule -DisplayName "nginx.exe" -Direction Inbound `
+            -Program "$thisDir\nginx\nginx.exe" -RemoteAddress LocalSubnet -Action Allow
+    }
+    
     return "  Nginx configured"
 }
 
@@ -393,7 +401,6 @@ function Set-WordPress
         } | Set-Content -Path "wordpress\wp-config.php"
     }
 
-    Write-Host "MOVING ******************"
     if (!(Test-Path -Path "wp-content"))
     {
         Write-Host "  Moving WordPress content to wp-content -folder so that it will not get over-written"
