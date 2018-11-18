@@ -38,10 +38,12 @@ function Main
     Split-Path -Path $PsScriptRoot -Parent | Set-Location
     $conf = Get-Config("tools\config.txt")
     
-    # Verify script location
-    if (!(Test-Path -Path "tools\$ScriptName")) { throw "Running in wrong directory" }
-    # Verify $env. All is well if NG_PORT is defined
-    # if !NG_PORT Write-Host "Use the start.bat -file to launch this PowerShell -script"
+    # Install pre-requisites
+    if (!(Test-Vc2017Redist))
+    {
+        Install-Vc2017Redist
+    }
+
     # Download components
     Get-MariaDb -MaVersion $conf.MA_VERSION
     Get-Php -PhVersion $conf.PH_VERSION
@@ -73,6 +75,7 @@ function Get-Config
                 { $hsh.Add($kv[0], $kv[1]) } }
     $hsh
 }
+
 function Assert-Path
 {
     param( [string]$Path, [string]$Pattern, [string]$Error )
@@ -103,6 +106,25 @@ function Get-WebFile
     $null = Start-BitsTransfer -Source $url -Destination $OutFile `
      -Displayname "Downloading $Displayname    (in case of emergency break process with Ctrl-C)" `
      -Description "from $Url "
+}
+
+function Test-Vc2017Redist
+{
+    $p64 = Get-ItemProperty -ErrorAction SilentlyContinue -Path Registry::HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64
+    if ($p64.Minor -gt 0)
+    {
+        $True
+        return
+    }
+    $False
+}
+
+function Install-Vc2017Redist
+{
+    Write-Host("Installing Microsoft Visual C++ Redistributable for Visual Studio 2017 library to run WordPress with PHP-FastCGI")
+    Get-Webfile -DisplayName "VC_redist.x64.exe" -Url "https://aka.ms/vs/15/release/VC_redist.x64.exe" -OutFile "VC_redist.x64.exe"
+    Start-Process -Wait -NoNewWindow -FilePath "VC_redist.x64.exe" -ArgumentList "/passive", "/norestart"
+    Remove-Item -Path "VC_redist.x64.exe"
 }
 
 #
