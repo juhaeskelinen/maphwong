@@ -192,10 +192,19 @@ function Set-MariaDb
         } | Set-Content -Path "mariadb\my.ini"
     }
 
-    if (!(Test-Path -Path "mariadb-data"))
+    if (Test-Path -Path "mariadb\data") 
     {
-        Write-Host "  Moving MariaDB data to mariadb-data -folder so that it will not get over-written"
+        if (Test-Path -Path "mariadb-data")
+    {
+            Write-Host "  Folder mariadb-data already exists. Keeping the old version"
+            #Remove-Item -Force -Recurse -Path "mariadb\data"
+            Remove-Item -Path "mariadb\data"
+        }
+        else
+        {
+            Write-Host "  Moving MariaDB data to folder mariadb-data so that it will not get over-written"
         Move-Item -Path "mariadb\data" -Destination "mariadb-data"
+        }
     }
     Assert-Path -Path "mariadb-data\mysql" -Error "MariaDB mariadb-data folder incomplete"
 
@@ -344,20 +353,18 @@ function Set-Nginx
         } | Set-Content -Path "nginx\conf\nginx.conf"
     }
 
+    $link = Get-Item "nginx\wordpress" -ErrorAction SilentlyContinue
+    if ($link.Target -and (($link.Target | Split-Path -parent) -ne (Get-Location)))
+    {
+        Write-Host "  Adjusting wordpress link"
+        #Remove-Item "nginx\wordpress" -Force -Confirm:$False
+        (Get-Item "nginx\wordpress").Delete()
+    }
+
     if (!(Test-Path -Path "nginx\wordpress"))
     {
-        # hardlink nginx\wordpress --> .\wordpress 
-        # Start-Process MKLINK -NoNewWindow -WindowStyle Minimized -RedirectStandardOutput
-        CMD /C "MKLINK /J nginx\wordpress wordpress 1>NUL"
-    }
-    Assert-Path -Path "nginx\wordpress\index.php" -Pattern "WordPress" -Error "nginx\wordpress\index.php fail"
-
-    $r = (Get-Netfirewallrule -DisplayName "nginx.exe" | Select-Object -Property action -First 1) 2>&1
-    if ($r | Select-String -Pattern "^No ")
-    {
-        $thisDir = Get-Location
-        $r = New-NetFirewallRule -DisplayName "nginx.exe" -Direction Inbound `
-            -Program "$thisDir\nginx\nginx.exe" -RemoteAddress LocalSubnet -Action Allow
+        # link nginx\wordpress --> wordpress 
+        $null = New-Item -ItemType Junction -Name nginx\wordpress -Target wordpress
     }
     
     return "  Nginx configured"
@@ -439,11 +446,38 @@ function Set-WordPress
         } | Set-Content -Path "wordpress\wp-config.php"
     }
 
-    if (!(Test-Path -Path "wp-content"))
+    $item = Get-Item "wordpress\wp-content" -ErrorAction SilentlyContinue
+    if ($item)
     {
+        if (!$item.Target)
+        {
+            # normal folder
+            if (Test-Path -Path "wp-content")
+    {
+                Write-Host "  Folder wp-content already exists. Keeping the old version"
+                Remove-Item -Force -Recurse -Path "wordpress\wp-content"
+            }
+            else
+            {
         Write-Host "  Moving WordPress content to wp-content -folder so that it will not get over-written"
         Move-Item -Path "wordpress\wp-content" -Destination "wp-content"
-        CMD /C "MKLINK /J wordpress\wp-content wp-content 1>NUL"
+            }
+        }
+        else
+        {
+            # junction. Check target
+            if (($item.Target | Split-Path -parent) -ne (Get-Location))
+            {
+                Write-Host "  Adjusting wordpress\wp-content link"
+                (Get-Item "wordpress\wp-content").Delete()
+            }
+        }
+    }
+
+    $item = Get-Item "wordpress\wp-content" -ErrorAction SilentlyContinue
+    if (!$item.Target)
+    {
+        $null = New-Item -ItemType Junction -Name "wordpress\wp-content" -Target "wp-content"
     }
     Assert-Path -Path "wp-content\themes" -Error "WordPress wp-content folder incomplete"
 
