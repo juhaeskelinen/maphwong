@@ -36,27 +36,43 @@ function Main
 
     # Set current working directory to MaphWong folder
     Split-Path -Path $PsScriptRoot -Parent | Set-Location
+    $conf = Get-Config("tools\config.txt")
+    
     # Verify script location
     if (!(Test-Path -Path "tools\$ScriptName")) { throw "Running in wrong directory" }
     # Verify $env. All is well if NG_PORT is defined
     # if !NG_PORT Write-Host "Use the start.bat -file to launch this PowerShell -script"
     # Download components
-    Get-MariaDb -MaVersion $env:MA_VERSION
-    Get-Php -PhVersion $env:PH_VERSION
-    Get-WordPress -WoVersion $env:WO_VERSION
-    Get-Nginx -NgVersion $env:NG_VERSION
+    Get-MariaDb -MaVersion $conf.MA_VERSION
+    Get-Php -PhVersion $conf.PH_VERSION
+    Get-WordPress -WoVersion $conf.WO_VERSION
+    Get-Nginx -NgVersion $conf.NG_VERSION
+
     # Configure components
-    Set-MariaDb -MaPort $env:MA_PORT
+    Set-MariaDb -MaPort $conf.MA_PORT
     Set-Php
-    Set-WordPress -MaPort $env:MA_PORT
-    Set-Nginx -NgPort $env:NG_PORT -PhPort $env:PH_PORT
+    Set-WordPress -MaPort $conf.MA_PORT
+    Set-Nginx -NgPort $conf.NG_PORT -PhPort $conf.PH_PORT
+
     # Start components
-    Start-MariaDb -MaPort $env:MA_PORT 
-    Start-Php -PhPort $env:PH_PORT
-    Start-Nginx -NgPort $env:NG_PORT
-    Start-Wordpress -MaPort $env:MA_PORT -PhPort $env:PH_PORT -NgPort $env:NG_PORT
+    Start-MariaDb -MaPort $conf.MA_PORT 
+    Start-Php -PhPort $conf.PH_PORT
+    Start-Nginx -NgPort $conf.NG_PORT
+
+    # Verify that components are running and update database content
+    Start-Wordpress -MaPort $conf.MA_PORT -PhPort $conf.PH_PORT -NgPort $conf.NG_PORT
 }
 
+function Get-Config
+{
+    param( [string]$Path )
+    $hsh = @{};
+    Get-Content $Path | foreach-object `
+        -process { $kv = [regex]::split($_ , '='); `
+            if ($kv[0] -and (!$kv[0].StartsWith("#"))) `
+                { $hsh.Add($kv[0], $kv[1]) } }
+    $hsh
+}
 function Assert-Path
 {
     param( [string]$Path, [string]$Pattern, [string]$Error )
@@ -458,8 +474,11 @@ function Start-WordPress
         # wordpress.wp_options db_version='$NgPort', initial_db_version='$NgPort'    
     }
 
-    Set-Clipboard -Value "HTTP://localhost:${env:NG_PORT}/"
-    Write-Host "  WordPress is now running at ""HTTP://localhost:${env:NG_PORT}/"". The URL is in your clip-board"
+    Set-Clipboard -Value "HTTP://localhost:$NgPort/"
+    Write-Host -NoNewline "  WordPress is now initialized and running at """
+    Write-Host -NoNewline -ForegroundColor DarkGreen "HTTP://localhost:$NgPort/"
+    Write-Host -NoNewline """. "
+    Write-Host "The URL is in your clip-board"
 }
 
 #
