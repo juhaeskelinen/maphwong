@@ -4,9 +4,13 @@ NG_PORT=52380
 # You could set the NG_PORT to value 80 if that is free
 
 MA_VERSION=10.3.9
-WO_VERSION=4.9.8
-NG_VERSION=1.14.0
+WO_VERSION=5.0.2
+NG_VERSION=1.15.7
 PH_VERSION=7.2.9
+
+# 
+# https://windows.php.net/
+# https://windows.php.net/downloads/releases/archives
 
 #    __  __         _____   _  __          __     _   _        
 #   |  \/  |       |  __ \ | | \ \        / /    | \ | |       
