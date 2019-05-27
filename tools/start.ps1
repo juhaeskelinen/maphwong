@@ -29,7 +29,7 @@ function Main
 {
     param( [string]$ScriptName )
 
-    #Set-PsDebug -Trace 2 -Strict # un-comment and run as administrator start.bat > debug.txt to get full debug trace
+    # Set-PsDebug -Trace 2 -Strict # un-comment and run as administrator start.bat > debug.txt to get full debug trace
     Start-Transcript -path .\tools\trace.txt | Out-Null
 
     Try { Setup }
@@ -51,6 +51,7 @@ function Setup
 
     # Set current working directory to MaphWong folder
     Split-Path -Path $PsScriptRoot -Parent | Set-Location
+    # Fetch version numbers from the configuration file
     $conf = Get-Config("tools\config.txt")
     
     # Install pre-requisites
@@ -65,26 +66,24 @@ function Setup
     Get-WordPress -WoVersion $conf.WO_VERSION
     Get-Nginx -NgVersion $conf.NG_VERSION
 
-    # Configure components
+    # Configure and start components
     Set-MariaDb -MaPort $conf.MA_PORT
-    Set-Php
-    Set-WordPress -MaPort $conf.MA_PORT
-    Set-Nginx -NgPort $conf.NG_PORT -PhPort $conf.PH_PORT
-    
-    # Start components
     Start-MariaDb -MaPort $conf.MA_PORT 
-    Start-Php -PhPort $conf.PH_PORT
+    Set-Nginx -NgPort $conf.NG_PORT -PhPort $conf.PH_PORT
     Start-Nginx -NgPort $conf.NG_PORT
+    Set-Php -MaPort $conf.MA_PORT
+    Start-Php -PhPort $conf.PH_PORT -NgPort $conf.NG_PORT
 
-    # Verify that components are running and update database content
-    Start-Wordpress -MaPort $conf.MA_PORT -PhPort $conf.PH_PORT -NgPort $conf.NG_PORT
+    # Initialize DB for wordpress and put address to clipboard
+    Set-Wordpress -MaPort $conf.MA_PORT -PhPort $conf.PH_PORT -NgPort $conf.NG_PORT
+    Start-WordPress -MaPort $conf.MA_PORT -PhPort $conf.PH_PORT -NgPort $conf.NG_PORT
 }
 
 function Get-Config
 {
     param( [string]$Path )
     $hsh = @{};
-    Get-Content $Path | foreach-object `
+    (Get-Content $Path) | foreach-object `
         -process { $kv = [regex]::split($_ , '='); `
             if ($kv[0] -and (!$kv[0].StartsWith("#"))) `
                 { $hsh.Add($kv[0], $kv[1]) } }
@@ -151,10 +150,24 @@ function Install-Vc2017Redist
 
 function DbQuery
 {
-    param( [string]$Query )
-    (mariadb\bin\mysql.exe --user=root --password= -e $Query 2>&1) | Out-String
+    param( [int]$Port, [string]$Query )
+    Write-Host("    DbQuery executing port=$Port ""$Query""")
+    #(mariadb\bin\mysql.exe --user=root --password= --port=$Port -e $Query 2>&1) -ErrorAction SilentlyContinue | Out-String
+    Invoke-Expression "mariadb\bin\mysql.exe --user=root --password= --port=$Port --execute ""$Query"""
 }
 
+function WebQuery
+{
+    param( [int]$Port, [string]$Page )
+    Write-Host "    WebQuery HTTP://localhost:$Port$Page"
+    try {
+        Invoke-WebRequest -TimeoutSec 10 "HTTP://localhost:$Port$Page" -ErrorAction SilentlyContinue
+    }
+    catch {
+        Write-Host "An error occurred:"
+        Write-Host $_
+    }
+}
 #
 # MariaDB
 #
@@ -207,29 +220,28 @@ function Set-MariaDb
         Copy-Item -Path "tools\_ma.conf" -Destination "mariadb\my.ini"
     }
 
-    if (!((Select-String -Path "mariadb\my.ini" -Pattern "port.*$MaPort") -and `
-          (Select-String -Path "mariadb\my.ini" -SimpleMatch "$thisDirUnix/mariadb-data")))
-    {
-        (Get-Content -Path "mariadb\my.ini") | ForEach-Object {
-            $_ -Replace "port.*", "port = $MaPort" -Replace "socket.*", "socket = mydb$MaPort" `
+    (Get-Content -Path "mariadb\my.ini") | ForEach-Object {
+        $_  -Replace "port.*", "port = $MaPort" `
+            -Replace "socket.*", "socket = mydb$MaPort" `
             -Replace "datadir.*", "datadir = $thisDirUnix/mariadb-data"
-        } | Set-Content -Path "mariadb\my.ini"
+    } | Set-Content -Path "mariadb\my.ini"
+
+    if (Test-Path -Path "mariadb-data")
+    {
+        Write-Host "  Folder mariadb-data already exists. Keeping the old version"
+        if (Test-Path -Path "mariadb\data") 
+        {
+            Write-Host "  Removing extra folder mariadb\data"
+            #Remove-Item -Force -Recurse -Path "mariadb\data"
+            Remove-Item -Recurse -Path "mariadb\data"
+        }
+    }
+    else
+    {
+        Write-Host "  Moving mariadb\data to folder mariadb-data so that it will not get over-written"
+        Move-Item -Path "mariadb\data" -Destination "mariadb-data"
     }
 
-    if (Test-Path -Path "mariadb\data") 
-    {
-        if (Test-Path -Path "mariadb-data")
-        {
-            Write-Host "  Folder mariadb-data already exists. Keeping the old version"
-            #Remove-Item -Force -Recurse -Path "mariadb\data"
-            Remove-Item -Path "mariadb\data"
-        }
-        else
-        {
-            Write-Host "  Moving MariaDB data to folder mariadb-data so that it will not get over-written"
-            Move-Item -Path "mariadb\data" -Destination "mariadb-data"
-        }
-    }
     Assert-Path -Path "mariadb-data\mysql" -Error "MariaDB mariadb-data folder incomplete"
 
     Write-Host "  MariaDB configured"
@@ -237,18 +249,32 @@ function Set-MariaDb
 
 function Start-MariaDb
 {
-    param( [int]$MaPort, [int]$NgPort )
+    param( [int]$MaPort )
     Write-Host "Starting MariaDB"
 
     if (Get-WmiObject Win32_Process -Filter "Name='mysqld.exe' and CommandLine LIKE '%port $MaPort%'")
     {
         Write-Host "  MariaDB already running on port $MaPort"
-        return
+    }
+    else
+    {
+        Write-Host "  Starting MariaDB on port $MaPort"
+        Start-Process -NoNewWindow -WorkingDirectory "mariadb" -FilePath "mariadb\bin\mysqld.exe"`
+            -ArgumentList "--defaults-file=my.ini", "--port $MaPort"
     }
 
-    Write-Host "  Starting MariaDB on port $MaPort"
-    Start-Process -NoNewWindow -WorkingDirectory "mariadb" -FilePath "mariadb\bin\mysqld.exe"`
-        -ArgumentList "--defaults-file=my.ini", "--port $MaPort"
+    Write-Host "  Checking MariaDB response on port $MaPort"
+    Start-Sleep -Seconds 1
+    While ($true)
+    {
+        if ((DbQuery -Port $MaPort -Query "SHOW DATABASES" | Select-String "mysql"))
+        {
+            Write-Host "  MariaDB is now responding on port $MaPort"
+            break
+        }
+        Write-Host "  Waiting for MariaDB response"
+        Start-Sleep -Seconds 2
+    }
 }
 
 #
@@ -285,30 +311,56 @@ function Get-Php
 
 function Set-Php
 {
+    param( [int]$MaPort )
     Write-Host "Verifying PHP-FastCGI configuration"
     
     if (!(Test-Path -Path "php\php.ini"))
     {
         Copy-Item -Path "tools\_ph.conf" -Destination "php\php.ini"
     }
+
+    if (!(Test-Path -Path "wordpress\_verify.php"))
+    {
+	    Copy-Item -Path "tools\_vf.php" -Destination "wordpress\_verify.php"
+    }
     
+    (Get-Content -Path "wordpress\_verify.php") | ForEach-Object {
+        $_  -Replace ".*// MA_PORT.*", "$port = $MaPort; // MA_PORT"`
+            -Replace "socket.*", "socket = mydb$MaPort" `
+            -Replace "datadir.*", "datadir = $thisDirUnix/mariadb-data"
+    } | Set-Content -Path "wordpress\_verify.php"
+
+
     Write-Host "  PHP-FastCGI configured"
 }
 
 function Start-Php
 {
-    param( [int]$PhPort )
+    param( [int]$PhPort, [int]$NgPort )
     Write-Host "Starting PHP-FastCGI"
 
     if (Get-WmiObject Win32_Process -Filter "Name='php-cgi.exe' and CommandLine LIKE '%localhost:$PhPort%'")
     {
         Write-Host "  PHP-FastCGI already running on port $PhPort"
-        return
+    }
+    else
+    {
+        Write-Host "  Starting PHP-FastCGI on port $PhPort"
+        Start-Process -NoNewWindow -WorkingDirectory "php" -FilePath "php\php-cgi.exe"`
+            -ArgumentList "-b", "localhost:$PhPort"
     }
 
-    Write-Host "  Starting PHP-FastCGI on port $PhPort"
-    Start-Process -NoNewWindow -WorkingDirectory "php" -FilePath "php\php-cgi.exe"`
-        -ArgumentList "-b", "localhost:$PhPort"
+    Write-Host "  Checking PHP-FastCGI response on Nginx port $NgPort"
+    While ($true)
+    {
+        if ((WebQuery -Port $NgPort -Page "/_verify.php" | Select-String "MaPhWoNg"))
+        {
+            Write-Host "  PHP-FastCGI is now responding on Nginx port $NgPort"
+            break
+        }
+        Write-Host "  Waiting for PHP-FastCGI response on Nginx port"
+        Start-Sleep -Seconds 3
+    }
 }
 
 #
@@ -348,38 +400,24 @@ function Get-Nginx
 
 function Set-Nginx
 {
-    param( [int]$NgPort, [int]$PhPort )
+    param( [int]$NgPort, [int]$PhPort, [string]$NgRoot )
     Write-Host "Verifying Nginx configuration"
+
+    $thisDir = Get-Location
+    $thisDirUnix = $thisDir -Replace "\\", "/"
 
     if (!(Test-Path -Path "nginx\conf\nginx.conf"))
     {
         Copy-Item -Path "tools\_ng.conf" -Destination "nginx\conf\nginx.conf"
     }
 
-    if (!((Select-String -Path "nginx\conf\nginx.conf" -Pattern "listen.*$NgPort") -and `
-          (Select-String -Path "nginx\conf\nginx.conf" -Pattern "fastcgi_pass.*$PhPort")))
-    {
-        (Get-Content -Path "nginx\conf\nginx.conf") | ForEach-Object {
-            $_ -Replace "listen.*", "listen $NgPort;" -Replace "fastcgi_pass.*", "fastcgi_pass localhost:$PhPort;"
-        } | Set-Content -Path "nginx\conf\nginx.conf"
-    }
-
-    $link = Get-Item "nginx\wordpress" -ErrorAction SilentlyContinue
-    if ($link.Target -and (($link.Target | Split-Path -parent) -ne (Get-Location)))
-    {
-        Write-Host "  Adjusting wordpress link"
-        #Remove-Item "nginx\wordpress" -Force -Confirm:$False
-        (Get-Item "nginx\wordpress").Delete()
-    }
-
-    if (!(Test-Path -Path "nginx\wordpress"))
-    {
-        # link nginx\wordpress --> wordpress 
-        $null = New-Item -ItemType Junction -Name nginx\wordpress -Target wordpress
-    }
-    
-    Assert-Path -Path "nginx\wordpress\index.php" -Pattern "WordPress" -Error "nginx\wordpress\index.php fail"
-    
+    (Get-Content -Path "nginx\conf\nginx.conf") | ForEach-Object {
+        $_  -Replace ".*## NG_PORT.*", " listen $NgPort; ## NG_PORT" `
+            -Replace ".*## PH_PORT.*", " fastcgi_pass localhost:$PhPort; ## PH_PORT" `
+            -Replace ".*## wordpress.*"," root ""$thisDirUnix/wordpress""; ## wordpress" `
+            -Replace ".*## wp-content.*"," root ""$thisDirUnix/wp-content""; ## wp-content"
+    } | Set-Content -Path "nginx\conf\nginx.conf"
+  
     Write-Host "  Nginx configured"
 }
 
@@ -391,17 +429,30 @@ function Start-Nginx
     if (Get-WmiObject Win32_Process -Filter "Name='nginx.exe' and CommandLine LIKE '%ngport=$NgPort%'")
     {
         Write-Host "  Nginx already running on port $NgPort"
-        return
     }
-    
-    if (!(Get-NetFirewallRule -DisplayName "nginx" -ErrorAction SilentlyContinue))
+    else
     {
-        Write-Host "  If you get a firewall prompt for Nginx, allow none or Private networks"
+        if (!(Get-NetFirewallRule -DisplayName "nginx" -ErrorAction SilentlyContinue))
+        {
+            Write-Host "  If you get a firewall prompt for Nginx, allow none or Private networks"
+        }
+
+        Write-Host "  Starting Nginx on port $NgPort"
+        Start-Process -NoNewWindow -WorkingDirectory "nginx" -FilePath "nginx\nginx.exe"`
+            -ArgumentList "-g", "`"env ngport=$NgPort;`""
     }
 
-    Write-Host "  Starting Nginx on port $NgPort"
-    Start-Process -NoNewWindow -WorkingDirectory "nginx" -FilePath "nginx\nginx.exe"`
-        -ArgumentList "-g", "`"env ngport=$NgPort;`""
+    Write-Host "  Checking Nginx response on port $NgPort"
+    While ($true)
+    {
+        if (WebQuery -Port $NgPort -Page "/readme.html" | Select-String "DOCTYPE html")
+        {
+            Write-Host "  Nginx is now responding on port $NgPort"
+            break
+        }
+        Write-Host "  Waiting for Nginx response"
+        Start-Sleep -Seconds 3
+    }
 }
 
 #
@@ -431,7 +482,7 @@ function Get-WordPress
     Remove-Item -Path "wo-dir" -ErrorAction SilentlyContinue
     Expand-Archive -Path "wo.zip" -DestinationPath "wo-dir"
     Remove-Item -Path "wo.zip"
-    Move-Item -Path "wo-dir\wordpress*" -Destination "wordpress"
+    Move-Item -Path "wo-dir\wordpress" -Destination "wordpress"
     Remove-Item -Path "wo-dir"
     Assert-Path -Path "wordpress\wp-login.php" -Error "WordPress unzip failed"
 
@@ -450,45 +501,23 @@ function Set-WordPress
         Copy-Item -Path "tools\_wo.conf" -Destination "wordpress\wp-config.php"
     }
   
-    if (!(Select-String -Path "wordpress\wp-config.php" -Pattern "DB_HOST.*localhost:$MaPort"))
-    {
-        (Get-Content -Path "wordpress\wp-config.php") | ForEach-Object {
-            $_ -Replace "DB_HOST.*", "DB_HOST', 'localhost:$MaPort');"
-        } | Set-Content -Path "wordpress\wp-config.php"
-    }
+    (Get-Content -Path "wordpress\wp-config.php") | ForEach-Object {
+        $_ -Replace "DB_HOST.*", "DB_HOST', 'localhost:$MaPort');"
+    } | Set-Content -Path "wordpress\wp-config.php"
 
-    $item = Get-Item "wordpress\wp-content" -ErrorAction SilentlyContinue
-    if ($item)
+    if (Test-Path -Path "wp-content")
     {
-        if (!$item.Target)
+        Write-Host "  Folder wp-content already exists. Keeping the old version"
+        if (Test-Path -Path "wordpress\wp-content")
         {
-            # normal folder
-            if (Test-Path -Path "wp-content")
-            {
-                Write-Host "  Folder wp-content already exists. Keeping the old version"
-                Remove-Item -Force -Recurse -Path "wordpress\wp-content"
-            }
-            else
-            {
-                Write-Host "  Moving WordPress content to wp-content -folder so that it will not get over-written"
-                Move-Item -Path "wordpress\wp-content" -Destination "wp-content"
-            }
-        }
-        else
-        {
-            # junction. Check target
-            if (($item.Target | Split-Path -parent) -ne (Get-Location))
-            {
-                Write-Host "  Adjusting wordpress\wp-content link"
-                (Get-Item "wordpress\wp-content").Delete()
-            }
+            Write-Host "  Removing extra folder wordpress\wp-content"
+            Remove-Item -Recurse -Path "wordpress\wp-content"
         }
     }
-
-    $item = Get-Item "wordpress\wp-content" -ErrorAction SilentlyContinue
-    if (!$item.Target)
+    else
     {
-        $null = New-Item -ItemType Junction -Name "wordpress\wp-content" -Target "wp-content"
+        Write-Host "  Moving wordPress\wp-content to wp-content so that it will not get over-written"
+        Move-Item -Path "wordpress\wp-content" -Destination "wp-content"
     }
 
     Assert-Path -Path "wp-content\themes" -Error "WordPress wp-content folder incomplete"
@@ -501,60 +530,39 @@ function Start-WordPress
     param( [string]$MaPort, [string]$PhPort, [string]$NgPort )
     Write-Host "Starting WordPress"
 
-    for ($i = 3; $i -ge 0; $i++)
+    if (!(Get-WmiObject Win32_Process -Filter "Name='mysqld.exe' and CommandLine LIKE '%port $MaPort%'"))
     {
-        $allRunning = $True
-        if (!(Get-WmiObject Win32_Process -Filter "Name='mysqld.exe' and CommandLine LIKE '%port $MaPort%'"))
-        {
-            Write-Host "MariaDB not running on port $MaPort"
-            $allRunning = $False
-        }
+        Throw "MariaDB not running on port $MaPort"
+    }
 
-        if (!(Get-WmiObject Win32_Process -Filter "Name='php-cgi.exe' and CommandLine LIKE '%localhost:$PhPort%'"))
-        {
-            Write-Host  "PHP-FastCGI not running on port $PhPort"
-            $allRunning = $False
-        }
+    if (!(Get-WmiObject Win32_Process -Filter "Name='nginx.exe' and CommandLine LIKE '%ngport=$NgPort%'"))
+    {
+        Throw "Nginx not running on $NgPort"
+    }
 
-        if (!(Get-WmiObject Win32_Process -Filter "Name='nginx.exe' and CommandLine LIKE '%ngport=$NgPort%'"))
-        {
-            Write-Host  "Nginx not running on $NgPort"
-            $allRunning = $False
-        }
-
-        if ($allRunning)
-        {
-            break
-        }
-
-        if ($i -eq 0)
-        {
-            Throw "Startup failed. Try runing this script once more"
-        }
-
-        Start-Sleep -Seconds 10
+    if (!(Get-WmiObject Win32_Process -Filter "Name='php-cgi.exe' and CommandLine LIKE '%localhost:$PhPort%'"))
+    {
+        Throw "PHP-FastCGI not running on port $PhPort"
     }
 
     $query = "SHOW DATABASES"
-    if (!(DbQuery -Query $query | Select-String "wordpress"))
+    if (!(DbQuery -Port $MaPort -Query $query | Select-String "wordpress"))
     {
-        Start-Sleep 5 # maybe MariaDB was just slow to start
-        if (!(DbQuery -Query $query | Select-String "wordpress"))
-        {
-            Write-Host "  Adding wordpress user and database table"
-            $query = "CREATE DATABASE wordpress;"`
-                + " GRANT ALL PRIVILEGES ON wordpress.* TO 'wordpress'@'localhost' IDENTIFIED BY 's3cr3t';"`
-                + " FLUSH PRIVILEGES;"
-            DbQuery -Query $query | Out-Null
-        }
+        Write-Host "  Adding wordpress database"
+        $query = "CREATE DATABASE wordpress;"
+        DbQuery -Port $MaPort -Query $query | Out-Null
+        $query = "GRANT ALL PRIVILEGES ON wordpress.* TO root@localhost;";
+        DbQuery -Port $MaPort -Query $query | Out-Null
+        $query = "FLUSH PRIVILEGES;"
+        DbQuery -Port $MaPort -Query $query | Out-Null
     }
 
     $query = "SHOW TABLES FROM wordpress"
-    if (DbQuery -Query $query | Select-String "wordpress")
+    if (DbQuery -Port $MaPort -Query $query | Select-String "wp_options")
     {
         $query = "UPDATE wordpress.wp_options SET option_value='http://localhost:$NgPort'"`
         + " WHERE option_name='siteurl' OR option_name='home';"
-        DbQuery -Query $query | Out-Null
+        DbQuery -Port $MaPort -Query $query | Out-Null
     }
 
     Set-Clipboard -Value "HTTP://localhost:$NgPort/"

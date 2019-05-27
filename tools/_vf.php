@@ -1,12 +1,14 @@
 <?php
 echo("MaPhWoNg\n");
 
-$servername = "127.0.0.1";
-$username = "wordpress";
-$password = "s3cr3t";
+$servername = "localhost";
+$username = "root";
+$password = "";
+$db = "wordpress";
+$port = "0"; // MA_PORT
 
 // Create connection
-$conn = new mysqli($servername, $username, $password);
+$conn = new mysqli($servername, $username, $password, $db, $port);
 
 // Check connection
 if ($conn->connect_error) {
