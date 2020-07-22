@@ -18,7 +18,7 @@ if ($conn->connect_errno) {
     echo "Database connected successfully";
 }
 
-echo "<br/>databases<br/>";
+echo "<br/></br/>databases<br/>";
 $result = mysqli_query($conn,"SHOW DATABASES"); 
 while ($row = mysqli_fetch_array($result)) { 
     echo $row[0]."<br/>"; 

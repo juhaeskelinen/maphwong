@@ -151,15 +151,14 @@ function Install-Vc2017Redist
 function DbQuery
 {
     param( [string]$Query )
-    Write-Host("    DbQuery executing ""$Query""")
-    #(mariadb\bin\mysql.exe --user=root --password= --port=$MaPort -e $Query 2>&1) -ErrorAction SilentlyContinue | Out-String
+    # Write-Host("    DbQuery executing ""$Query""")
     Invoke-Expression "mariadb\bin\mysql.exe --user=root --password=MaPhWoNg --port=$MaPort --execute ""$Query"""
 }
 
 function WebQuery
 {
     param( [int]$Port, [string]$Page )
-    Write-Host "    WebQuery HTTP://localhost:$Port$Page"
+    # Write-Host "    WebQuery HTTP://localhost:$Port$Page"
     try {
         Invoke-WebRequest -TimeoutSec 10 "HTTP://localhost:$Port$Page" -ErrorAction SilentlyContinue
     }
@@ -250,7 +249,7 @@ function Start-MariaDb
     {
         Write-Host "  Starting MariaDB on port $MaPort"
         Start-Process -NoNewWindow -WorkingDirectory "mariadb" -FilePath "mariadb\bin\mysqld.exe"`
-            -ArgumentList "--defaults-file=my.ini", "--port $MaPort"
+            -ArgumentList "--defaults-file=my.ini", "--port $MaPort", "--silent-startup"
     }
 
     Write-Host "  Checking MariaDB response on port $MaPort"
@@ -316,7 +315,7 @@ function Set-Php
     }
     
     (Get-Content -Path "wordpress\_verify.php") | ForEach-Object {
-        $_  -Replace "\`$port = `"0`";", "\`$port = `"$MaPort`";"
+        $_  -Replace "`$port = `"0`";", "`$port = `"$MaPort`";"
     } | Set-Content -Path "wordpress\_verify.php"
 
     Write-Host "  PHP-FastCGI configured"
@@ -402,8 +401,8 @@ function Set-Nginx
     (Get-Content -Path "nginx\conf\nginx.conf") | ForEach-Object {
         $_  -Replace ".*## NG_PORT.*", " listen $NgPort; ## NG_PORT" `
             -Replace ".*## PH_PORT.*", " fastcgi_pass localhost:$PhPort; ## PH_PORT" `
-            -Replace ".*## wordpress.*"," root ""$thisDirUnix/wordpress""; ## wordpress" `
-            -Replace ".*## wp-content.*"," root ""$thisDirUnix/wp-content""; ## wp-content"
+            -Replace ".*## wordpress.*"," root `"$thisDirUnix/wordpress`"; ## wordpress" `
+            -Replace ".*## wp-content.*"," root `"$thisDirUnix`"; ## wp-content"
     } | Set-Content -Path "nginx\conf\nginx.conf"
   
     Write-Host "  Nginx configured"
@@ -554,9 +553,9 @@ function Start-WordPress
     }
 
     Set-Clipboard -Value "HTTP://localhost:$NgPort/"
-    Write-Host -NoNewline "  WordPress is now initialized and running at """
+    Write-Host -NoNewline "  WordPress is now initialized and running at `""
     Write-Host -NoNewline -ForegroundColor DarkGreen "HTTP://localhost:$NgPort/"
-    Write-Host -NoNewline """. "
+    Write-Host -NoNewline "`". "
     Write-Host "The URL is in your clip-board"
 }
 
