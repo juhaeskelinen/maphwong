@@ -3,15 +3,20 @@ PH_PORT=52940
 NG_PORT=52380
 # You could set the NG_PORT to value 80 if that is free
 
-MA_VERSION=10.3.14
-WO_VERSION=5.1.1
-NG_VERSION=1.15.12
-PH_VERSION=7.3.3
+# latest versions of the tools
 
-# 
-# https://nginx.org/download/
+# https://downloads.mariadb.org/
+MA_VERSION=10.5.4
+
+# https://wordpress.org/download/
+WO_VERSION=5.4.2
+
+# https://nginx.org/
+NG_VERSION=1.19.1
+
 # https://windows.php.net/
-# https://windows.php.net/downloads/releases/archives
+PH_VERSION=7.4.0
+
 
 #    __  __         _____   _  __          __     _   _        
 #   |  \/  |       |  __ \ | | \ \        / /    | \ | |       

@@ -150,10 +150,10 @@ function Install-Vc2017Redist
 
 function DbQuery
 {
-    param( [int]$Port, [string]$Query )
-    Write-Host("    DbQuery executing port=$Port ""$Query""")
-    #(mariadb\bin\mysql.exe --user=root --password= --port=$Port -e $Query 2>&1) -ErrorAction SilentlyContinue | Out-String
-    Invoke-Expression "mariadb\bin\mysql.exe --user=root --password= --port=$Port --execute ""$Query"""
+    param( [string]$Query )
+    Write-Host("    DbQuery executing ""$Query""")
+    #(mariadb\bin\mysql.exe --user=root --password= --port=$MaPort -e $Query 2>&1) -ErrorAction SilentlyContinue | Out-String
+    Invoke-Expression "mariadb\bin\mysql.exe --user=root --password=MaPhWoNg --port=$MaPort --execute ""$Query"""
 }
 
 function WebQuery
@@ -197,11 +197,11 @@ function Get-MariaDb
     Assert-Path -Path "ma.zip" -Error "MariaDB download failed"
 
     Write-Host "  Expanding downloaded MariaDB zip-archive"
-    Remove-Item -Path "ma-dir" -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Path "ma-dir" -ErrorAction SilentlyContinue
     Expand-Archive -Path "ma.zip" -DestinationPath "ma-dir"
     Remove-Item -Path "ma.zip"
     Move-Item -Path "ma-dir\mariadb*" -Destination "mariadb"
-    Remove-Item -Path "ma-dir"
+    Remove-Item -Recurse -Path "ma-dir"
     Assert-Path -Path "mariadb\bin\mysql.exe" -Error "MariaDB unzip failed"
 
     Write-Host "  MariaDB downloaded"
@@ -226,20 +226,10 @@ function Set-MariaDb
             -Replace "datadir.*", "datadir = $thisDirUnix/mariadb-data"
     } | Set-Content -Path "mariadb\my.ini"
 
-    if (Test-Path -Path "mariadb-data")
+    if (!(Test-Path -Path "mariadb-data"))
     {
-        Write-Host "  Folder mariadb-data already exists. Keeping the old version"
-        if (Test-Path -Path "mariadb\data") 
-        {
-            Write-Host "  Removing extra folder mariadb\data"
-            #Remove-Item -Force -Recurse -Path "mariadb\data"
-            Remove-Item -Recurse -Path "mariadb\data"
-        }
-    }
-    else
-    {
-        Write-Host "  Moving mariadb\data to folder mariadb-data so that it will not get over-written"
-        Move-Item -Path "mariadb\data" -Destination "mariadb-data"
+        Start-Process -Wait -NoNewWindow -WorkingDirectory "mariadb" -FilePath "mariadb\bin\mysql_install_db.exe"`
+        -ArgumentList "-s", "-d $thisDirUnix/mariadb-data", "-P $MaPort", "-W mydb$MaPort", "-p MaPhWoNg"
     }
 
     Assert-Path -Path "mariadb-data\mysql" -Error "MariaDB mariadb-data folder incomplete"
@@ -267,7 +257,7 @@ function Start-MariaDb
     Start-Sleep -Seconds 1
     While ($true)
     {
-        if ((DbQuery -Port $MaPort -Query "SHOW DATABASES" | Select-String "mysql"))
+        if ((DbQuery -Query "SHOW DATABASES" | Select-String "mysql"))
         {
             Write-Host "  MariaDB is now responding on port $MaPort"
             break
@@ -300,7 +290,7 @@ function Get-Php
     Assert-Path -Path "ph.zip" -Error "PHP-FastCGI download failed"
 
     Write-Host "  Expanding downloaded PHP-FastCGI zip-archive"
-    Remove-Item -Path "ph-dir" -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Path "ph-dir" -ErrorAction SilentlyContinue
     Expand-Archive -Path "ph.zip" -DestinationPath "ph-dir"
     Remove-Item -Path "ph.zip"
     Move-Item -Path "ph-dir" -Destination "php"
@@ -321,15 +311,13 @@ function Set-Php
 
     if (!(Test-Path -Path "wordpress\_verify.php"))
     {
-	    Copy-Item -Path "tools\_vf.php" -Destination "wordpress\_verify.php"
+        Copy-Item -Path "tools\_vf.php" -Destination "wordpress\_verify.php"
+        New-Item -Path "wordpress" -Name "favicon.ico" -ItemType "file" | Out-Null
     }
     
     (Get-Content -Path "wordpress\_verify.php") | ForEach-Object {
-        $_  -Replace ".*// MA_PORT.*", "$port = $MaPort; // MA_PORT"`
-            -Replace "socket.*", "socket = mydb$MaPort" `
-            -Replace "datadir.*", "datadir = $thisDirUnix/mariadb-data"
+        $_  -Replace "\`$port = `"0`";", "\`$port = `"$MaPort`";"
     } | Set-Content -Path "wordpress\_verify.php"
-
 
     Write-Host "  PHP-FastCGI configured"
 }
@@ -385,11 +373,11 @@ function Get-Nginx
     Assert-Path -Path "ng.zip" -Error "Nginx download failed"
 
     Write-Host "  Expanding downloaded Nginx zip-archive"
-    Remove-Item -Path "ng-dir" -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Path "ng-dir" -ErrorAction SilentlyContinue
     Expand-Archive -Path "ng.zip" -DestinationPath "ng-dir"
     Remove-Item -Path "ng.zip"
     Move-Item -Path "ng-dir\nginx*" -Destination "nginx"
-    Remove-Item -Path "ng-dir"
+    Remove-Item -Recurse -Path "ng-dir"
     Assert-Path -Path "nginx\nginx.exe" -Error "Nginx unzip failed"
     
     Move-Item "nginx\conf\nginx.conf" "nginx\conf\orig-nginx.xonf"
@@ -479,11 +467,11 @@ function Get-WordPress
     Assert-Path -Path "wo.zip" -Error "WordPress download failed"
 
     Write-Host "  Expanding downloaded WordPress zip-archive"
-    Remove-Item -Path "wo-dir" -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Path "wo-dir" -ErrorAction SilentlyContinue
     Expand-Archive -Path "wo.zip" -DestinationPath "wo-dir"
     Remove-Item -Path "wo.zip"
     Move-Item -Path "wo-dir\wordpress" -Destination "wordpress"
-    Remove-Item -Path "wo-dir"
+    Remove-Item -Recurse -Path "wo-dir"
     Assert-Path -Path "wordpress\wp-login.php" -Error "WordPress unzip failed"
 
     Remove-Item -Path "wordpress\wp-config-sample.php"
@@ -516,7 +504,7 @@ function Set-WordPress
     }
     else
     {
-        Write-Host "  Moving wordPress\wp-content to wp-content so that it will not get over-written"
+        Write-Host "  Moving wordPress\wp-content to .\wp-content so that it will not get over-written"
         Move-Item -Path "wordpress\wp-content" -Destination "wp-content"
     }
 
@@ -546,23 +534,23 @@ function Start-WordPress
     }
 
     $query = "SHOW DATABASES"
-    if (!(DbQuery -Port $MaPort -Query $query | Select-String "wordpress"))
+    if (!(DbQuery -Query $query | Select-String "wordpress"))
     {
         Write-Host "  Adding wordpress database"
         $query = "CREATE DATABASE wordpress;"
-        DbQuery -Port $MaPort -Query $query | Out-Null
+        DbQuery -Query $query | Out-Null
         $query = "GRANT ALL PRIVILEGES ON wordpress.* TO root@localhost;";
-        DbQuery -Port $MaPort -Query $query | Out-Null
+        DbQuery -Query $query | Out-Null
         $query = "FLUSH PRIVILEGES;"
-        DbQuery -Port $MaPort -Query $query | Out-Null
+        DbQuery -Query $query | Out-Null
     }
 
     $query = "SHOW TABLES FROM wordpress"
-    if (DbQuery -Port $MaPort -Query $query | Select-String "wp_options")
+    if (DbQuery -Query $query | Select-String "wp_options")
     {
         $query = "UPDATE wordpress.wp_options SET option_value='http://localhost:$NgPort'"`
         + " WHERE option_name='siteurl' OR option_name='home';"
-        DbQuery -Port $MaPort -Query $query | Out-Null
+        DbQuery -Query $query | Out-Null
     }
 
     Set-Clipboard -Value "HTTP://localhost:$NgPort/"
